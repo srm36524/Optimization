@@ -15,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📈 Portfolio Optimization Laboratory")
+st.title("📈 Portfolio Optimization Lab by SRM. This Lab uses the historical returns of Equity, Gold and Debt")
 st.caption("Brute Force • Monte Carlo • Efficient Frontier • Capital Market Line")
 
 # ----------------------------------------------------
