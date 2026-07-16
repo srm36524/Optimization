@@ -1,33 +1,89 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
 
 st.set_page_config(
-    page_title="Efficient Frontier Demo",
+    page_title="Portfolio Optimization Demo",
     layout="wide"
 )
 
-st.title("Efficient Frontier using Brute Force (1% Intervals) by SRM. This optimization model covers returns of Equity, Gold and Debt for the last 26 years")
+st.title("Portfolio Optimization using Efficient Frontier")
+st.markdown("### Brute Force Optimization (1% Weight Intervals)")
 
-# ---------------------------------------------------------
-# Load Excel directly from GitHub
-# ---------------------------------------------------------
+# ----------------------------------------------------
+# Load Data from GitHub
+# ----------------------------------------------------
 
-github_url = "https://raw.githubusercontent.com/srm36524/Optimization/main/Yearly%20Returns.xlsx"
+GITHUB_FILE = "https://raw.githubusercontent.com/srm36524/Optimization/main/Yearly%20Returns.xlsx"
+
+@st.cache_data
+def load_data():
+    df = pd.read_excel(GITHUB_FILE)
+    return df
 
 try:
-    df = pd.read_excel(github_url)
+    df = load_data()
 except Exception as e:
-    st.error(f"Unable to load Excel file.\n\n{e}")
+    st.error("Unable to load Excel from GitHub")
+    st.error(e)
     st.stop()
 
-st.success("Data loaded from GitHub")
+# ----------------------------------------------------
+# Sidebar
+# ----------------------------------------------------
 
-# ---------------------------------------------------------
-# Prepare Returns
-# ---------------------------------------------------------
+st.sidebar.header("Portfolio Settings")
+
+year_column = df.columns[0]
+
+years = df[year_column].tolist()
+
+start_year = st.sidebar.selectbox(
+    "Start Year",
+    years,
+    index=0
+)
+
+end_year = st.sidebar.selectbox(
+    "End Year",
+    years,
+    index=len(years)-1
+)
+
+if start_year > end_year:
+    st.sidebar.error("Start year should be less than End year.")
+    st.stop()
+
+risk_free = st.sidebar.number_input(
+    "Risk Free Rate (%)",
+    min_value=0.0,
+    max_value=20.0,
+    value=6.0,
+    step=0.25
+)/100
+
+return_method = st.sidebar.radio(
+    "Return Method",
+    [
+        "Arithmetic Mean",
+        "Geometric Mean"
+    ]
+)
+
+show_all = st.sidebar.checkbox(
+    "Show All Portfolios",
+    value=False
+)
+
+# ----------------------------------------------------
+# Filter Selected Years
+# ----------------------------------------------------
+
+df = df[
+    (df[year_column] >= start_year) &
+    (df[year_column] <= end_year)
+]
 
 returns = df.iloc[:,1:].copy()
 
@@ -39,21 +95,24 @@ returns = returns/100
 
 asset_names = returns.columns.tolist()
 
-st.subheader("Yearly Returns")
+st.subheader("Selected Data")
 
-st.dataframe(df)
+st.dataframe(df,use_container_width=True)
 
-# ---------------------------------------------------------
-# Statistics
-# ---------------------------------------------------------
+# ----------------------------------------------------
+# Calculate Statistics
+# ----------------------------------------------------
 
-mean_returns = returns.mean()
+if return_method=="Arithmetic Mean":
+    mean_returns=returns.mean()
+else:
+    mean_returns=((1+returns).prod()**(1/len(returns)))-1
 
-cov_matrix = returns.cov()
+cov_matrix=returns.cov()
 
-st.subheader("Average Annual Returns")
+st.subheader("Average Returns")
 
-avg = pd.DataFrame({
+avg=pd.DataFrame({
     "Asset":asset_names,
     "Average Return (%)":(mean_returns*100).round(2)
 })
@@ -62,159 +121,261 @@ st.dataframe(avg,use_container_width=True)
 
 st.subheader("Covariance Matrix")
 
-st.dataframe(cov_matrix)
+st.dataframe(cov_matrix,use_container_width=True)
+# ----------------------------------------------------
+# Generate All Portfolio Combinations
+# ----------------------------------------------------
 
-# ---------------------------------------------------------
-# Risk Free Rate
-# ---------------------------------------------------------
+st.subheader("Generating Portfolio Combinations...")
 
-risk_free = st.sidebar.number_input(
-    "Risk Free Rate (%)",
-    value=0.0,
-    step=0.5
-)/100
+results = []
 
-# ---------------------------------------------------------
-# Generate All Portfolios
-# ---------------------------------------------------------
+progress = st.progress(0)
 
-results=[]
-
-progress=st.progress(0)
-
-total=5151
-count=0
+total_portfolios = 5151
+counter = 0
 
 for w1 in range(101):
 
-    for w2 in range(101-w1):
+    for w2 in range(101 - w1):
 
-        w3=100-w1-w2
+        w3 = 100 - w1 - w2
 
-        weights=np.array([w1,w2,w3])/100
+        weights = np.array([w1, w2, w3]) / 100
 
-        port_return=np.dot(weights,mean_returns)
+        # Expected Return
+        portfolio_return = np.dot(weights, mean_returns)
 
-        port_risk=np.sqrt(
-            np.dot(
-                weights.T,
-                np.dot(cov_matrix,weights)
-            )
+        # Portfolio Variance
+        portfolio_variance = np.dot(
+            weights.T,
+            np.dot(cov_matrix.values, weights)
         )
 
-        sharpe=(port_return-risk_free)/port_risk if port_risk>0 else np.nan
+        # Portfolio Risk
+        portfolio_risk = np.sqrt(portfolio_variance)
 
-        results.append({
+        # Sharpe Ratio
+        if portfolio_risk > 0:
+            sharpe = (portfolio_return - risk_free) / portfolio_risk
+        else:
+            sharpe = np.nan
 
-            asset_names[0]:w1,
+        row = {}
 
-            asset_names[1]:w2,
+        for i, asset in enumerate(asset_names):
+            row[asset] = round(weights[i] * 100, 0)
 
-            asset_names[2]:w3,
+        row["Return"] = portfolio_return
+        row["Risk"] = portfolio_risk
+        row["Variance"] = portfolio_variance
+        row["Sharpe"] = sharpe
 
-            "Return":port_return,
+        results.append(row)
 
-            "Risk":port_risk,
-
-            "Sharpe":sharpe
-
-        })
-
-        count+=1
-
-        progress.progress(count/total)
-
-results=pd.DataFrame(results)
+        counter += 1
+        progress.progress(counter / total_portfolios)
 
 progress.empty()
 
-st.success(f"Total Portfolios Evaluated : {len(results):,}")
+results = pd.DataFrame(results)
 
-# ---------------------------------------------------------
+st.success(f"Generated {len(results):,} portfolios.")
+
+# ----------------------------------------------------
+# Portfolio Statistics
+# ----------------------------------------------------
+
+st.subheader("Portfolio Statistics")
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric(
+    "Total Portfolios",
+    f"{len(results):,}"
+)
+
+col2.metric(
+    "Highest Return",
+    f"{results['Return'].max()*100:.2f}%"
+)
+
+col3.metric(
+    "Lowest Risk",
+    f"{results['Risk'].min()*100:.2f}%"
+)
+
+col4.metric(
+    "Maximum Sharpe",
+    f"{results['Sharpe'].max():.3f}"
+)
+
+# ----------------------------------------------------
 # Best Portfolios
-# ---------------------------------------------------------
+# ----------------------------------------------------
 
-max_sharpe=results.loc[results["Sharpe"].idxmax()]
+max_sharpe = results.loc[
+    results["Sharpe"].idxmax()
+]
 
-min_risk=results.loc[results["Risk"].idxmin()]
+min_variance = results.loc[
+    results["Risk"].idxmin()
+]
 
-col1,col2=st.columns(2)
+col1, col2 = st.columns(2)
 
 with col1:
 
     st.subheader("Maximum Sharpe Portfolio")
 
-    st.dataframe(max_sharpe)
+    st.dataframe(
+        max_sharpe.to_frame(),
+        use_container_width=True
+    )
 
 with col2:
 
-    st.subheader("Minimum Risk Portfolio")
+    st.subheader("Minimum Variance Portfolio")
 
-    st.dataframe(min_risk)
+    st.dataframe(
+        min_variance.to_frame(),
+        use_container_width=True
+    )
 
-# ---------------------------------------------------------
+# ----------------------------------------------------
+# Allocation Tables
+# ----------------------------------------------------
+
+st.subheader("Portfolio Allocations")
+
+alloc1 = pd.DataFrame({
+    "Asset": asset_names,
+    "Weight (%)": [
+        max_sharpe[a]
+        for a in asset_names
+    ]
+})
+
+alloc2 = pd.DataFrame({
+    "Asset": asset_names,
+    "Weight (%)": [
+        min_variance[a]
+        for a in asset_names
+    ]
+})
+
+left, right = st.columns(2)
+
+with left:
+    st.markdown("### Maximum Sharpe Allocation")
+    st.dataframe(
+        alloc1,
+        use_container_width=True
+    )
+
+with right:
+    st.markdown("### Minimum Variance Allocation")
+    st.dataframe(
+        alloc2,
+        use_container_width=True
+    )
+    # ----------------------------------------------------
 # Efficient Frontier
-# ---------------------------------------------------------
+# ----------------------------------------------------
 
-frontier=[]
+st.subheader("Efficient Frontier")
 
-risk_values=np.sort(results["Risk"].unique())
+# Sort portfolios by Risk
+sorted_results = results.sort_values(
+    by=["Risk", "Return"]
+).reset_index(drop=True)
 
-for r in risk_values:
+# Extract Efficient Frontier
+frontier = []
 
-    temp=results[np.isclose(results["Risk"],r)]
+best_return = -999999
 
-    frontier.append(temp.loc[temp["Return"].idxmax()])
+for i in range(len(sorted_results)-1, -1, -1):
 
-frontier=pd.DataFrame(frontier)
+    row = sorted_results.iloc[i]
 
-# ---------------------------------------------------------
+    if row["Return"] >= best_return:
+
+        frontier.append(row)
+
+        best_return = row["Return"]
+
+frontier = pd.DataFrame(frontier)
+
+frontier = frontier.sort_values(
+    by="Risk"
+)
+
+# ----------------------------------------------------
 # Plot
-# ---------------------------------------------------------
+# ----------------------------------------------------
 
-fig=go.Figure()
+fig = go.Figure()
 
+# All portfolios
 fig.add_trace(
 
     go.Scatter(
 
-        x=results["Risk"],
+        x=results["Risk"]*100,
 
-        y=results["Return"],
+        y=results["Return"]*100,
 
         mode="markers",
 
+        name="Portfolios",
+
         marker=dict(
+
+            size=7,
 
             color=results["Sharpe"],
 
             colorscale="Viridis",
 
-            size=6,
-
             showscale=True,
 
-            colorbar=dict(title="Sharpe")
+            colorbar=dict(
+                title="Sharpe"
+            ),
+
+            opacity=0.75
 
         ),
 
-        text=results[asset_names].astype(str),
+        customdata=results[asset_names].values,
 
-        name="All Portfolios"
+        hovertemplate=
+        "<b>Portfolio</b><br>"
+        "Risk : %{x:.2f}%<br>"
+        "Return : %{y:.2f}%<br>"
+        "Sharpe : %{marker.color:.3f}<br><br>"
+        + "<b>Weights</b><br>"
+        + asset_names[0] + ": %{customdata[0]:.0f}%<br>"
+        + asset_names[1] + ": %{customdata[1]:.0f}%<br>"
+        + asset_names[2] + ": %{customdata[2]:.0f}%<extra></extra>"
 
     )
 
 )
 
+# Efficient Frontier
 fig.add_trace(
 
     go.Scatter(
 
-        x=frontier["Risk"],
+        x=frontier["Risk"]*100,
 
-        y=frontier["Return"],
+        y=frontier["Return"]*100,
 
         mode="lines",
+
+        name="Efficient Frontier",
 
         line=dict(
 
@@ -222,57 +383,85 @@ fig.add_trace(
 
             width=4
 
-        ),
-
-        name="Efficient Frontier"
+        )
 
     )
 
 )
 
+# Maximum Sharpe
 fig.add_trace(
 
     go.Scatter(
 
-        x=[max_sharpe["Risk"]],
+        x=[max_sharpe["Risk"]*100],
 
-        y=[max_sharpe["Return"]],
+        y=[max_sharpe["Return"]*100],
 
         mode="markers",
 
+        name="Maximum Sharpe",
+
         marker=dict(
+
+            size=18,
 
             color="red",
 
-            size=14
+            symbol="star"
 
         ),
 
-        name="Maximum Sharpe"
+        hovertemplate=
+
+        "<b>Maximum Sharpe Portfolio</b><br>"
+
+        f"Return : {max_sharpe['Return']*100:.2f}%<br>"
+
+        f"Risk : {max_sharpe['Risk']*100:.2f}%<br>"
+
+        f"Sharpe : {max_sharpe['Sharpe']:.3f}"
+
+        "<extra></extra>"
 
     )
 
 )
 
+# Minimum Variance
 fig.add_trace(
 
     go.Scatter(
 
-        x=[min_risk["Risk"]],
+        x=[min_variance["Risk"]*100],
 
-        y=[min_risk["Return"]],
+        y=[min_variance["Return"]*100],
 
         mode="markers",
 
+        name="Minimum Variance",
+
         marker=dict(
+
+            size=18,
 
             color="green",
 
-            size=14
+            symbol="diamond"
 
         ),
 
-        name="Minimum Variance"
+        hovertemplate=
+
+        "<b>Minimum Variance Portfolio</b><br>"
+
+        f"Return : {min_variance['Return']*100:.2f}%<br>"
+
+        f"Risk : {min_variance['Risk']*100:.2f}%<br>"
+
+        f"Sharpe : {min_variance['Sharpe']:.3f}"
+
+        "<extra></extra>"
 
     )
 
@@ -280,84 +469,339 @@ fig.add_trace(
 
 fig.update_layout(
 
-    title="Efficient Frontier",
+    height=750,
 
-    xaxis_title="Portfolio Risk (Standard Deviation)",
+    title="Efficient Frontier (Brute Force 1% Optimization)",
 
-    yaxis_title="Expected Return",
+    xaxis_title="Portfolio Risk (%)",
 
-    height=700
+    yaxis_title="Expected Return (%)",
+
+    hovermode="closest",
+
+    template="plotly_white",
+
+    legend=dict(
+
+        orientation="h",
+
+        y=1.05
+
+    )
 
 )
 
-st.plotly_chart(fig,use_container_width=True)
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
 
-# ---------------------------------------------------------
-# Allocation Tables
-# ---------------------------------------------------------
+# ----------------------------------------------------
+# Portfolio Summary
+# ----------------------------------------------------
 
-st.subheader("Maximum Sharpe Allocation")
+st.subheader("Portfolio Summary")
 
-alloc1=pd.DataFrame({
+summary = pd.DataFrame({
 
-    "Asset":asset_names,
+    "Portfolio":[
 
-    "Weight (%)":[
+        "Maximum Sharpe",
 
-        max_sharpe[asset_names[0]],
+        "Minimum Variance"
 
-        max_sharpe[asset_names[1]],
+    ],
 
-        max_sharpe[asset_names[2]]
+    "Return (%)":[
+
+        round(max_sharpe["Return"]*100,2),
+
+        round(min_variance["Return"]*100,2)
+
+    ],
+
+    "Risk (%)":[
+
+        round(max_sharpe["Risk"]*100,2),
+
+        round(min_variance["Risk"]*100,2)
+
+    ],
+
+    "Sharpe":[
+
+        round(max_sharpe["Sharpe"],3),
+
+        round(min_variance["Sharpe"],3)
 
     ]
 
 })
 
-st.dataframe(alloc1,use_container_width=True)
+st.dataframe(
+    summary,
+    use_container_width=True
+)
+# ----------------------------------------------------
+# Efficient Frontier
+# ----------------------------------------------------
 
-st.subheader("Minimum Variance Allocation")
+st.subheader("Efficient Frontier")
 
-alloc2=pd.DataFrame({
+# Sort portfolios by Risk
+sorted_results = results.sort_values(
+    by=["Risk", "Return"]
+).reset_index(drop=True)
 
-    "Asset":asset_names,
+# Extract Efficient Frontier
+frontier = []
 
-    "Weight (%)":[
+best_return = -999999
 
-        min_risk[asset_names[0]],
+for i in range(len(sorted_results)-1, -1, -1):
 
-        min_risk[asset_names[1]],
+    row = sorted_results.iloc[i]
 
-        min_risk[asset_names[2]]
+    if row["Return"] >= best_return:
+
+        frontier.append(row)
+
+        best_return = row["Return"]
+
+frontier = pd.DataFrame(frontier)
+
+frontier = frontier.sort_values(
+    by="Risk"
+)
+
+# ----------------------------------------------------
+# Plot
+# ----------------------------------------------------
+
+fig = go.Figure()
+
+# All portfolios
+fig.add_trace(
+
+    go.Scatter(
+
+        x=results["Risk"]*100,
+
+        y=results["Return"]*100,
+
+        mode="markers",
+
+        name="Portfolios",
+
+        marker=dict(
+
+            size=7,
+
+            color=results["Sharpe"],
+
+            colorscale="Viridis",
+
+            showscale=True,
+
+            colorbar=dict(
+                title="Sharpe"
+            ),
+
+            opacity=0.75
+
+        ),
+
+        customdata=results[asset_names].values,
+
+        hovertemplate=
+        "<b>Portfolio</b><br>"
+        "Risk : %{x:.2f}%<br>"
+        "Return : %{y:.2f}%<br>"
+        "Sharpe : %{marker.color:.3f}<br><br>"
+        + "<b>Weights</b><br>"
+        + asset_names[0] + ": %{customdata[0]:.0f}%<br>"
+        + asset_names[1] + ": %{customdata[1]:.0f}%<br>"
+        + asset_names[2] + ": %{customdata[2]:.0f}%<extra></extra>"
+
+    )
+
+)
+
+# Efficient Frontier
+fig.add_trace(
+
+    go.Scatter(
+
+        x=frontier["Risk"]*100,
+
+        y=frontier["Return"]*100,
+
+        mode="lines",
+
+        name="Efficient Frontier",
+
+        line=dict(
+
+            color="black",
+
+            width=4
+
+        )
+
+    )
+
+)
+
+# Maximum Sharpe
+fig.add_trace(
+
+    go.Scatter(
+
+        x=[max_sharpe["Risk"]*100],
+
+        y=[max_sharpe["Return"]*100],
+
+        mode="markers",
+
+        name="Maximum Sharpe",
+
+        marker=dict(
+
+            size=18,
+
+            color="red",
+
+            symbol="star"
+
+        ),
+
+        hovertemplate=
+
+        "<b>Maximum Sharpe Portfolio</b><br>"
+
+        f"Return : {max_sharpe['Return']*100:.2f}%<br>"
+
+        f"Risk : {max_sharpe['Risk']*100:.2f}%<br>"
+
+        f"Sharpe : {max_sharpe['Sharpe']:.3f}"
+
+        "<extra></extra>"
+
+    )
+
+)
+
+# Minimum Variance
+fig.add_trace(
+
+    go.Scatter(
+
+        x=[min_variance["Risk"]*100],
+
+        y=[min_variance["Return"]*100],
+
+        mode="markers",
+
+        name="Minimum Variance",
+
+        marker=dict(
+
+            size=18,
+
+            color="green",
+
+            symbol="diamond"
+
+        ),
+
+        hovertemplate=
+
+        "<b>Minimum Variance Portfolio</b><br>"
+
+        f"Return : {min_variance['Return']*100:.2f}%<br>"
+
+        f"Risk : {min_variance['Risk']*100:.2f}%<br>"
+
+        f"Sharpe : {min_variance['Sharpe']:.3f}"
+
+        "<extra></extra>"
+
+    )
+
+)
+
+fig.update_layout(
+
+    height=750,
+
+    title="Efficient Frontier (Brute Force 1% Optimization)",
+
+    xaxis_title="Portfolio Risk (%)",
+
+    yaxis_title="Expected Return (%)",
+
+    hovermode="closest",
+
+    template="plotly_white",
+
+    legend=dict(
+
+        orientation="h",
+
+        y=1.05
+
+    )
+
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ----------------------------------------------------
+# Portfolio Summary
+# ----------------------------------------------------
+
+st.subheader("Portfolio Summary")
+
+summary = pd.DataFrame({
+
+    "Portfolio":[
+
+        "Maximum Sharpe",
+
+        "Minimum Variance"
+
+    ],
+
+    "Return (%)":[
+
+        round(max_sharpe["Return"]*100,2),
+
+        round(min_variance["Return"]*100,2)
+
+    ],
+
+    "Risk (%)":[
+
+        round(max_sharpe["Risk"]*100,2),
+
+        round(min_variance["Risk"]*100,2)
+
+    ],
+
+    "Sharpe":[
+
+        round(max_sharpe["Sharpe"],3),
+
+        round(min_variance["Sharpe"],3)
 
     ]
 
 })
 
-st.dataframe(alloc2,use_container_width=True)
-
-# ---------------------------------------------------------
-# Download
-# ---------------------------------------------------------
-
-csv=results.to_csv(index=False).encode()
-
-st.download_button(
-
-    "Download All Portfolio Combinations",
-
-    csv,
-
-    file_name="Efficient_Frontier_Results.csv",
-
-    mime="text/csv"
-
+st.dataframe(
+    summary,
+    use_container_width=True
 )
-
-# ---------------------------------------------------------
-# Display Results
-# ---------------------------------------------------------
-
-st.subheader("All Portfolio Combinations")
-
-st.dataframe(results,use_container_width=True)
