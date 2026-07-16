@@ -9,7 +9,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("Efficient Frontier using Brute Force (1% Intervals)")
+st.title("Efficient Frontier using Brute Force (1% Intervals) by SRM. This optimization model covers returns of Equity, Gold and Debt for the last 26 years")
 
 # ---------------------------------------------------------
 # Load Excel directly from GitHub
